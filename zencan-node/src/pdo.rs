@@ -475,11 +475,6 @@ impl<'a> Pdo<'a> {
                 .ok();
             offset += length;
         }
-
-
-
-
-
         // If there is an old value here which has not been sent yet, replace it with the latest
         // Data will be sent by mbox in message handling thread.
         self.buffered_value.store(Some( (data,offset) ));
@@ -780,12 +775,10 @@ impl ProvidesSubObjects for PdoCommObject<'_> {
         match sub {
             0 => Some((
                 SubInfo::MAX_SUB_NUMBER,
-                const { &ConstField::new(2u8.to_le_bytes()) },
+                const { &ConstField::new(5u8.to_le_bytes()) },
             )),
             1 => Some((
-                SubInfo::new_u32()
-                    .rw_access()
-                    .persist(self.cob.should_persist()),
+                SubInfo::new_u32().rw_access().persist(self.cob.should_persist()),
                 &self.cob,
             )),
             2 => Some((
