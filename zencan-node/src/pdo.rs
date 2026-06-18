@@ -78,6 +78,8 @@ pub struct PdoDefaults<'a> {
     cob_id: u32,
     flags: u8,
     transmission_type: u8,
+    inhibit_time: u16,
+    event_time: u16,
     mappings: &'a [u32],
 }
 
@@ -99,6 +101,8 @@ impl<'a> PdoDefaults<'a> {
         cob_id: 0,
         flags: 0,
         transmission_type: 0,
+        event_time: 0,
+        inhibit_time: 0,
         mappings: &[],
     };
 
@@ -110,6 +114,8 @@ impl<'a> PdoDefaults<'a> {
         valid: bool,
         rtr_disabled: bool,
         transmission_type: u8,
+        inhibit_time: u16,
+        event_time: u16,
         mappings: &'static [u32],
     ) -> Self {
         // Store flags as a single field to save those precious few bytes
@@ -131,6 +137,8 @@ impl<'a> PdoDefaults<'a> {
             cob_id,
             flags,
             transmission_type,
+            inhibit_time,
+            event_time,
             mappings,
         }
     }
@@ -189,6 +197,21 @@ pub struct Pdo<'a> {
     /// 1 - 240: PDO is sent on receipt of every Nth SYNC message
     /// 254: PDO is sent asynchronously on application request
     transmission_type: AtomicCell<u8>,
+
+    /// Timestamp of the last PDO transmission in microseconds (µs).
+    /// This is a single timer shared between inhibit and event mechanisms. This is
+    /// correct because both timers measure time from the last transmission.
+    timer: AtomicCell<u64>, 
+    /// Inhibit time in units of 0.1 ms (100 µs). (subindex 0x3)
+    /// * Standards Reference
+    /// CiA 301, TPDO Communication Parameter, sub-index 03h.
+    inhibit_time: AtomicCell<u16>, 
+    /// Event timer in milliseconds (ms). (subindex 0x5)
+    /// * Standards Reference
+    /// `CiA 301`, TPDO Communication Parameter, sub-index 05h.
+    event_time: AtomicCell<u16>,
+
+
     /// Tracks the number of sync signals since this was last sent or received
     sync_counter: AtomicCell<u8>,
     /// The last received data value for an RPDO, or ready to transmit data for a TPDO
@@ -213,6 +236,9 @@ impl<'a> Pdo<'a> {
         let valid = AtomicCell::new(false);
         let rtr_disabled = AtomicCell::new(false);
         let transmission_type = AtomicCell::new(0);
+        let timer = AtomicCell::new(0);
+        let inhibit_time = AtomicCell::new(0);
+        let event_time = AtomicCell::new(0);
         let sync_counter = AtomicCell::new(0);
         let buffered_value = AtomicCell::new(None);
         let valid_maps = AtomicCell::new(0);
@@ -226,6 +252,9 @@ impl<'a> Pdo<'a> {
             valid,
             rtr_disabled,
             transmission_type,
+            timer,
+            inhibit_time,
+            event_time,
             sync_counter,
             buffered_value,
             valid_maps,
@@ -253,6 +282,43 @@ impl<'a> Pdo<'a> {
     /// Get the valid bit value
     pub fn valid(&self) -> bool {
         self.valid.load()
+    }
+
+    /// Update timer point  
+    pub fn update_timer(&self, now_us:u64){
+        self.timer.store(now_us);
+    }
+
+    /// Event timer check  
+    pub fn is_event_timer_expired(&self, now_us:u64)->bool{
+        let event_time = self.event_time.load();
+        if event_time == 0 {
+            return false;
+        }
+        if now_us.saturating_sub(self.timer.load()) >= event_time as u64 * 1_000{
+            true
+        }else{false}
+    }
+
+    /// Inhibit timer check  
+    pub fn is_inhibit_timer_expired(&self, now_us:u64)->bool{
+        let inhibit_time = self.inhibit_time.load();
+        if inhibit_time == 0{
+            return true;
+        }
+        if now_us.saturating_sub(self.timer.load()) >= inhibit_time as u64 * 100{
+            true
+        }else{false}
+    }
+
+    /// Inhibit time
+    pub fn inhibit_time(&self)->u16{
+        self.inhibit_time.load()
+    }
+
+    /// Event time
+    pub fn event_time(&self)->u16{
+        self.event_time.load()
     }
 
     /// Set the transmission type for this PDO
@@ -468,6 +534,8 @@ impl<'a> Pdo<'a> {
         self.cob_id.store(None);
         self.rtr_disabled.store(defaults.rtr_disabled());
         self.transmission_type.store(defaults.transmission_type);
+        self.inhibit_time.store(defaults.inhibit_time);
+        self.event_time.store(defaults.event_time);
     }
 }
 
@@ -585,11 +653,105 @@ impl SubObjectAccess for PdoTransmissionTypeSubObject<'_> {
     }
 }
 
+
+
+/// SubObject access for Inhibit Time (sub-index 0x03)
+struct PdoInhibitTimeSubObject<'a> {
+    pdo: &'a Pdo<'a>,
+}
+
+impl<'a> PdoInhibitTimeSubObject<'a> {
+    pub const fn new(pdo: &'a Pdo<'a>) -> Self {
+        Self { pdo }
+    }
+}
+
+impl SubObjectAccess for PdoInhibitTimeSubObject<'_> {
+    fn read(&self, offset: usize, buf: &mut [u8]) -> Result<usize, AbortCode> {
+        if offset >= 2 {
+            return Ok(0);
+        }
+        let value = self.pdo.inhibit_time.load();
+        let bytes = value.to_le_bytes();
+        let read_len = buf.len().min(2 - offset);
+        buf[0..read_len].copy_from_slice(&bytes[offset..offset + read_len]);
+        Ok(read_len)
+    }
+
+    fn read_size(&self) -> usize {
+        2 // u16
+    }
+
+    fn write(&self, data: &[u8]) -> Result<(), AbortCode> {
+        let nmt_state = self.pdo.nmt_state();
+        if nmt_state != NmtState::PreOperational && nmt_state != NmtState::Bootup {
+            return Err(AbortCode::GeneralError);
+        }
+        
+        if data.len() < 2 {
+            Err(AbortCode::DataTypeMismatchLengthLow)
+        } else if data.len() > 2 {
+            Err(AbortCode::DataTypeMismatchLengthHigh)
+        } else {
+            let value = u16::from_le_bytes([data[0], data[1]]);
+            self.pdo.inhibit_time.store(value);
+            Ok(())
+        }
+    }
+}
+
+/// SubObject access for Event Timer (sub-index 0x05)
+struct PdoEventTimeSubObject<'a> {
+    pdo: &'a Pdo<'a>,
+}
+
+impl<'a> PdoEventTimeSubObject<'a> {
+    pub const fn new(pdo: &'a Pdo<'a>) -> Self {
+        Self { pdo }
+    }
+}
+
+impl SubObjectAccess for PdoEventTimeSubObject<'_> {
+    fn read(&self, offset: usize, buf: &mut [u8]) -> Result<usize, AbortCode> {
+        if offset >= 2 {
+            return Ok(0);
+        }
+        let value = self.pdo.event_time.load();
+        let bytes = value.to_le_bytes();
+        let read_len = buf.len().min(2 - offset);
+        buf[0..read_len].copy_from_slice(&bytes[offset..offset + read_len]);
+        Ok(read_len)
+    }
+
+    fn read_size(&self) -> usize {
+        2 // u16
+    }
+
+    fn write(&self, data: &[u8]) -> Result<(), AbortCode> {
+        let nmt_state = self.pdo.nmt_state();
+        if nmt_state != NmtState::PreOperational && nmt_state != NmtState::Bootup {
+            return Err(AbortCode::GeneralError);
+        }
+        
+        if data.len() < 2 {
+            Err(AbortCode::DataTypeMismatchLengthLow)
+        } else if data.len() > 2 {
+            Err(AbortCode::DataTypeMismatchLengthHigh)
+        } else {
+            let value = u16::from_le_bytes([data[0], data[1]]);
+            self.pdo.event_time.store(value);
+            Ok(())
+        }
+    }
+}
+
 /// Implements a PDO communications config object for both RPDOs and TPDOs
 #[allow(missing_debug_implementations)]
 pub struct PdoCommObject<'a> {
     cob: PdoCobSubObject<'a>,
     transmission_type: PdoTransmissionTypeSubObject<'a>,
+    inhibit_time: PdoInhibitTimeSubObject<'a>,
+    event_time: PdoEventTimeSubObject<'a>,
 }
 
 impl<'a> PdoCommObject<'a> {
@@ -597,9 +759,13 @@ impl<'a> PdoCommObject<'a> {
     pub const fn new(pdo: &'a Pdo<'a>) -> Self {
         let cob = PdoCobSubObject::new(pdo);
         let transmission_type = PdoTransmissionTypeSubObject::new(pdo);
+        let inhibit_time = PdoInhibitTimeSubObject::new(pdo);
+        let event_time = PdoEventTimeSubObject::new(pdo);
         Self {
             cob,
             transmission_type,
+            inhibit_time,
+            event_time
         }
     }
 }
@@ -620,6 +786,14 @@ impl ProvidesSubObjects for PdoCommObject<'_> {
             2 => Some((
                 SubInfo::new_u8().rw_access().persist(true),
                 &self.transmission_type,
+            )),
+            3 => Some((
+                SubInfo::new_u16().rw_access().persist(true),
+                &self.inhibit_time,
+            )),
+            5 => Some((
+                SubInfo::new_u16().rw_access().persist(true),
+                &self.event_time,
             )),
             _ => None,
         }
@@ -775,16 +949,128 @@ mod tests {
             .write(1, &((0x1000 << 16) | 32 as u32).to_le_bytes())
             .unwrap();
         mapping_obj.write(0, &[1]).unwrap();
-        comm_obj.write(1, &(1u32 << 31).to_le_bytes()).unwrap();
+        comm_obj.write(1, &(1u32 << 31).to_le_bytes()).unwrap(); // COB-ID
+        comm_obj.write(2, &[1u8]).unwrap(); // Transmission Type
+        comm_obj.write(3, &[10u8, 0u8]).unwrap(); // Inhibit Time = 10 (1 ms)
+        comm_obj.write(5, &[100u8, 0u8]).unwrap(); // Event Timer = 100 ms
 
+        // Проверяем, что значения установились корректно
+        assert_eq!(pdo.transmission_type(), 1);
+        assert_eq!(pdo.inhibit_time.load(), 10);
+        assert_eq!(pdo.event_time.load(), 100);
+
+        // Переключаемся в Operational режим
         nmt_state.store(NmtState::Operational);
 
-        // Changing now should error
+        // Проверяем, что запись маппинга запрещена в Operational
         let result = mapping_obj.write(1, &0u32.to_le_bytes());
         assert_eq!(Err(AbortCode::GeneralError), result);
+
+        // Проверяем, что запись COB-ID запрещена в Operational
         let result = comm_obj.write(1, &0u32.to_le_bytes());
         assert_eq!(Err(AbortCode::GeneralError), result);
-        let result = comm_obj.write(2, &0u32.to_le_bytes());
+
+        // Проверяем, что запись Transmission Type запрещена в Operational
+        let result = comm_obj.write(2, &[2u8]);
         assert_eq!(Err(AbortCode::GeneralError), result);
+
+        // ✅ Проверяем, что запись Inhibit Time запрещена в Operational
+        let result = comm_obj.write(3, &[20u8, 0u8]);
+        assert_eq!(Err(AbortCode::GeneralError), result);
+
+        // ✅ Проверяем, что запись Event Timer запрещена в Operational
+        let result = comm_obj.write(5, &[200u8, 0u8]);
+        assert_eq!(Err(AbortCode::GeneralError), result);
+
+        // Проверяем, что значения НЕ изменились после неудачных попыток записи
+        assert_eq!(pdo.transmission_type(), 1); // Осталось 1
+        assert_eq!(pdo.inhibit_time.load(), 10); // Осталось 10
+        assert_eq!(pdo.event_time.load(), 100); // Осталось 100
+
+        // ✅ Проверяем, что чтение работает даже в Operational
+        let mut buf = [0u8; 2];
+        let result = comm_obj.read(3, 0, &mut buf);
+        assert_eq!(result, Ok(2));
+        assert_eq!(buf, [10u8, 0u8]); // Inhibit Time = 10
+
+        let mut buf = [0u8; 2];
+        let result = comm_obj.read(5, 0, &mut buf);
+        assert_eq!(result, Ok(2));
+        assert_eq!(buf, [100u8, 0u8]); // Event Timer = 100
     }
+
+
+    #[test]
+    /// Test that reading Inhibit Time and Event Timer works correctly
+    pub fn test_read_inhibit_and_event_timer() {
+        let object1000 = TestObject::default();
+        let od = &[ODEntry {
+            index: 0x1000,
+            data: &object1000,
+        }];
+        let nmt_state = AtomicCell::new(NmtState::PreOperational);
+
+        let pdo = Pdo::new(od, &nmt_state);
+        let comm_obj = PdoCommObject::new(&pdo);
+
+        // Устанавливаем значения
+        pdo.inhibit_time.store(0x1234);
+        pdo.event_time.store(0x5678);
+
+        // Читаем Inhibit Time (полностью)
+        let mut buf = [0u8; 2];
+        let result = comm_obj.read(3, 0, &mut buf);
+        assert_eq!(result, Ok(2));
+        assert_eq!(u16::from_le_bytes(buf), 0x1234);
+
+        // Читаем Event Timer (полностью)
+        let mut buf = [0u8; 2];
+        let result = comm_obj.read(5, 0, &mut buf);
+        assert_eq!(result, Ok(2));
+        assert_eq!(u16::from_le_bytes(buf), 0x5678);
+
+        // Проверяем partial read (offset = 1) - старший байт
+        let mut buf = [0u8; 1];
+        let result = comm_obj.read(3, 1, &mut buf);
+        assert_eq!(result, Ok(1));
+        assert_eq!(buf[0], 0x12); // ✅ Старший байт 0x1234
+        
+        // Проверяем partial read (offset = 0) - младший байт
+        let mut buf = [0u8; 1];
+        let result = comm_obj.read(3, 0, &mut buf);
+        assert_eq!(result, Ok(1));
+        assert_eq!(buf[0], 0x34); // ✅ Младший байт 0x1234
+    }
+
+    #[test]
+    /// Test that writing Inhibit Time and Event Timer works correctly in PreOperational
+    pub fn test_write_inhibit_and_event_timer() {
+        let object1000 = TestObject::default();
+        let od = &[ODEntry {
+            index: 0x1000,
+            data: &object1000,
+        }];
+        let nmt_state = AtomicCell::new(NmtState::PreOperational);
+
+        let pdo = Pdo::new(od, &nmt_state);
+        let comm_obj = PdoCommObject::new(&pdo);
+
+        // Записываем Inhibit Time
+        let result = comm_obj.write(3, &[0xCDu8, 0xABu8]);
+        assert_eq!(result, Ok(()));
+        assert_eq!(pdo.inhibit_time.load(), 0xABCD);
+
+        // Записываем Event Timer
+        let result = comm_obj.write(5, &[0xEFu8, 0xBEu8]);
+        assert_eq!(result, Ok(()));
+        assert_eq!(pdo.event_time.load(), 0xBEEF);
+
+        // Проверяем, что запись с неправильной длиной данных возвращает ошибку
+        let result = comm_obj.write(3, &[0xCDu8]); // только 1 байт
+        assert_eq!(result, Err(AbortCode::DataTypeMismatchLengthLow));
+
+        let result = comm_obj.write(5, &[0xCDu8, 0xABu8, 0x00u8]); // 3 байта
+        assert_eq!(result, Err(AbortCode::DataTypeMismatchLengthHigh));
+    }
+
 }

@@ -188,6 +188,8 @@ async fn read_pdos<S: AsyncCanSender + Sync + Send, R: AsyncCanReceiver>(
 
         let cob_value = client.read_u32(comm_base, 1).await?;
         let transmission_type = client.read_u8(comm_base, 2).await?;
+        let inhibit_timer = client.read_u16(comm_base, 3).await?;
+        let event_timer = client.read_u16(comm_base, 5).await?;
 
         let frame = (cob_value & (1 << 29)) != 0;
         let rtr_disabled = (cob_value & (1 << 30)) != 0;
@@ -212,6 +214,8 @@ async fn read_pdos<S: AsyncCanSender + Sync + Send, R: AsyncCanReceiver>(
             rtr_disabled,
             mappings,
             transmission_type,
+            inhibit_timer,
+            event_timer
         });
         comm_base += 1;
         mapping_base += 1;

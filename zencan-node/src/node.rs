@@ -320,11 +320,7 @@ impl<'a> Node<'a> {
 
         if self.heartbeat_period_ms != 0 && now_us >= self.next_heartbeat_time_us {
             self.send_heartbeat();
-            // Perform catchup if we are behind, e.g. if we have not send a heartbeat in a long
-            // time because we have not been configured
-            if self.next_heartbeat_time_us < now_us {
-                self.next_heartbeat_time_us = now_us;
-            }
+            self.next_heartbeat(now_us);
         }
 
         // check if a sync has been received
@@ -344,20 +340,25 @@ impl<'a> Node<'a> {
                     continue;
                 }
                 let transmission_type = pdo.transmission_type();
-                if transmission_type >= 254 {
-                    if global_trigger && pdo.read_events() {
-                        pdo.send_pdo();
-                        self.transmit_flag = true;
-                    }
-                } else if sync.is_some() && pdo.sync_update() {
+                let send_trigger = if transmission_type >= 254 {
+                    let event_triggered = global_trigger && pdo.read_events();
+                    let event_timer_ok = pdo.is_event_timer_expired(now_us);
+                    let inhibit_timer_ok = pdo.is_inhibit_timer_expired(now_us);
+                    inhibit_timer_ok && (event_triggered || event_timer_ok)
+                } else if sync.is_some() && pdo.sync_update(){
+                    true
+                }else{
+                    false
+                };
+                
+                if send_trigger {
                     pdo.send_pdo();
                     self.transmit_flag = true;
+                    pdo.update_timer(now_us);
+                    pdo.clear_events();
                 }
             }
 
-            for pdo in self.state.tpdos() {
-                pdo.clear_events();
-            }
 
             for rpdo in self.state.rpdos() {
                 if !rpdo.valid() {
@@ -498,7 +499,9 @@ impl<'a> Node<'a> {
             self.send_heartbeat();
         }
     }
-
+    fn next_heartbeat(&mut self, now_us: u64){
+        self.next_heartbeat_time_us = now_us + (self.heartbeat_period_ms as u64) * 1000;
+    }
     fn send_heartbeat(&mut self) {
         if let NodeId::Configured(node_id) = self.node_id {
             let heartbeat = Heartbeat {
@@ -507,7 +510,6 @@ impl<'a> Node<'a> {
                 state: self.nmt_state(),
             };
             self.send_message(heartbeat.into());
-            self.next_heartbeat_time_us += (self.heartbeat_period_ms as u64) * 1000;
         }
     }
 }

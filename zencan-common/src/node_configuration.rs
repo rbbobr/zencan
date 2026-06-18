@@ -163,6 +163,11 @@ struct PdoConfigSerializer {
     /// - 1 - 240: Sent in response to every Nth sync
     /// - 254: Event driven (application to send it whenever it wants)
     pub transmission_type: u8,
+
+    /// Inhibit timer
+    pub inhibit_timer: u16,
+    /// Event timer
+    pub event_timer: u16,
 }
 
 /// Represents the configuration parameters for a single PDO
@@ -184,6 +189,11 @@ pub struct PdoConfig {
     /// - 1 - 240: Sent in response to every Nth sync
     /// - 254: Event driven (application to send it whenever it wants)
     pub transmission_type: u8,
+
+    /// Inhibit timer
+    pub inhibit_timer: u16,
+    /// Event timer
+    pub event_timer: u16,
 }
 
 /// Error when deserializing a [`PdoConfigSerializer`]
@@ -217,6 +227,8 @@ impl TryFrom<PdoConfigSerializer> for PdoConfig {
             mappings: value.mappings,
             rtr_disabled: value.rtr_disabled,
             transmission_type: value.transmission_type,
+            inhibit_timer: value.inhibit_timer,
+            event_timer: value.event_timer
         })
     }
 }
@@ -392,6 +404,8 @@ mod test {
         enabled = true
         cob_id = 0x800
         transmission_type = 254
+        event_timer = 1000
+        inhibit_timer = 0
         mappings = [
             { index=0x1000, sub=1, size=8 },
         ]
@@ -407,6 +421,28 @@ mod test {
     }
 
     #[test]
+    fn test_time() {
+        let str = r#"
+        [tpdo.0]
+        enabled = true
+        cob_id = 0x181
+        extended = true
+        transmission_type = 254
+        event_timer = 1000
+        inhibit_timer = 10
+        mappings = [
+            { index=0x1000, sub=1, size=8 },
+        ]
+        "#;
+
+        let result = NodeConfig::load_from_str(str).unwrap();
+        assert_eq!(1, result.tpdos().len());
+        let tpdo = result.tpdos().get(&0).unwrap();
+        assert_eq!(1000, tpdo.event_timer);
+        assert_eq!(10, tpdo.inhibit_timer);
+    }
+
+    #[test]
     fn test_extended_cob() {
         let str = r#"
         [tpdo.0]
@@ -414,6 +450,8 @@ mod test {
         cob_id = 0x800
         extended = true
         transmission_type = 254
+        event_timer = 1000
+        inhibit_timer = 0
         mappings = [
             { index=0x1000, sub=1, size=8 },
         ]
@@ -432,6 +470,8 @@ mod test {
         enabled = true
         cob_id = 0x181
         transmission_type = 254
+        event_timer = 1000
+        inhibit_timer = 0
         mappings = [
             { index=0x1000, sub=1, size=8 },
             { index=0x1000, sub=2, size=16 },

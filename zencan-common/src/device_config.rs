@@ -364,6 +364,26 @@ fn pdo_objects(num_rpdo: usize, num_tpdo: usize) -> Vec<ObjectDefinition> {
                         pdo_mapping: PdoMappable::None,
                         persist: true,
                     },
+                    SubDefinition {
+                        sub_index: 3,
+                        parameter_name: format!("Inhibit time for {}{}", pdo_type, i),
+                        field_name: None,
+                        data_type: DataType::UInt16,
+                        access_type: AccessType::Rw.into(),
+                        default_value: Some(DefaultValue::Integer(0)),
+                        pdo_mapping: PdoMappable::Both,
+                        persist: true,
+                    },
+                    SubDefinition {
+                        sub_index: 5,
+                        parameter_name: format!("Event time for {}{}", pdo_type, i),
+                        field_name: None,
+                        data_type: DataType::UInt16,
+                        access_type: AccessType::Rw.into(),
+                        default_value: Some(DefaultValue::Integer(0)),
+                        pdo_mapping: PdoMappable::Both,
+                        persist: true,
+                    },
                 ],
             }),
         });
@@ -572,6 +592,54 @@ pub struct PdoDefaultConfig {
     /// - 1 - 240: Sent in response to every Nth sync
     /// - 254: Event driven (application to send it whenever it wants)
     pub transmission_type: u8,
+     /// Inhibit time in units of 0.1 ms (100 µs).
+    ///
+    /// Defines the minimum time interval between two transmissions of the same TPDO.
+    /// This prevents bus overload when data changes rapidly in asynchronous mode.
+    ///
+    /// # Behavior
+    /// - **Value = 0**: Inhibit time is disabled (no restriction on transmission frequency).
+    /// - **Value > 0**: The PDO cannot be transmitted again until this time has elapsed since
+    ///   the last transmission.
+    ///
+    /// # Application
+    /// - **Only used for asynchronous PDOs** (`transmission_type` = 254 or 255).
+    /// - **Not used for synchronous PDOs** (`transmission_type` = 0 or 1..240).
+    /// - The timer is reset after **every** transmission (both event-driven and timer-driven).
+    ///
+    /// # Example
+    /// `inhibit_timer = 10` means the minimum interval between transmissions is 1 ms.
+    ///
+    /// # Standards Reference
+    /// CiA 301, Communication Profile Area, TPDO Communication Parameter, sub-index 03h.
+    pub inhibit_timer: u16,
+    /// Event timer in milliseconds (ms).
+    ///
+    /// Defines the maximum time interval between two transmissions of the same TPDO in
+    /// asynchronous mode. If no event (data change) occurs within this period, the PDO is
+    /// transmitted forcibly to ensure regular data updates.
+    ///
+    /// # Behavior
+    /// - **Value = 0**: Event timer is disabled (no forced periodic transmission).
+    /// - **Value > 0**: The PDO is transmitted when this time expires, even if the data
+    ///   has not changed. The timer is reset after **every** transmission.
+    ///
+    /// # Interaction with data change events
+    /// 1. If data changes **before** the timer expires → PDO is sent immediately.
+    /// 2. If data changes **after** the timer expires → PDO is sent by timer, then
+    ///    the timer restarts, and data change event is processed on next cycle.
+    /// 3. The timer is always reset after transmission, regardless of trigger source.
+    ///
+    /// # Application
+    /// - **Only used for asynchronous PDOs** (`transmission_type` = 254 or 255).
+    /// - **Not used for synchronous PDOs** (`transmission_type` = 0 or 1..240).
+    ///
+    /// # Example
+    /// `event_timer = 100` means the PDO is forcibly transmitted every 100 ms.
+    ///
+    /// # Standards Reference
+    /// CiA 301, Communication Profile Area, TPDO Communication Parameter, sub-index 05h.
+    pub event_timer: u16,
 }
 
 #[derive(Clone, Debug, Default, Deserialize)]

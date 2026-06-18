@@ -15,6 +15,8 @@ fn pdo_init_tokens(cfg: Option<&PdoDefaultConfig>) -> TokenStream {
         enabled,
         rtr_disabled,
         transmission_type,
+        inhibit_timer,
+        event_timer,
         mappings,
     }) = cfg
     {
@@ -28,6 +30,8 @@ fn pdo_init_tokens(cfg: Option<&PdoDefaultConfig>) -> TokenStream {
                 #enabled,
                 #rtr_disabled,
                 #transmission_type,
+                #inhibit_timer,
+                #event_timer,
                 &[#(#mappings),*]
             ))
         }

@@ -247,6 +247,8 @@ async fn test_tpdo_event_flags() {
                         },
                     ],
                     transmission_type: 254,
+                    event_timer:1000,
+                    inhibit_timer:10
                 },
             )
             .await
@@ -266,6 +268,8 @@ async fn test_tpdo_event_flags() {
                         size: 32,
                     }],
                     transmission_type: 254,
+                    event_timer:1000,
+                    inhibit_timer:10
                 },
             )
             .await
@@ -410,6 +414,8 @@ async fn test_tpdo_sync_initiated_transmission() {
                         },
                     ],
                     transmission_type: 2,
+                    event_timer:1000,
+                    inhibit_timer:10
                 },
             )
             .await
@@ -429,6 +435,8 @@ async fn test_tpdo_sync_initiated_transmission() {
                         size: 32,
                     }],
                     transmission_type: 3,
+                    event_timer:1000,
+                    inhibit_timer:10
                 },
             )
             .await
@@ -607,6 +615,8 @@ async fn test_pdo_configuration() {
                 },
             ],
             transmission_type: 254,
+            event_timer:1000,
+            inhibit_timer:10
         };
 
         client.configure_tpdo(0, &config).await?;
@@ -621,8 +631,10 @@ async fn test_pdo_configuration() {
             (0x2001 << 16) | 1 << 8 | 32,
             client.upload_u32(0x1A00, 2).await?
         );
-        assert_eq!(254, client.upload_u8(0x1800, 2).await?);
         assert_eq!(0x301, client.upload_u32(0x1800, 1).await?);
+        assert_eq!(254, client.upload_u8(0x1800, 2).await?);
+        assert_eq!(1000, client.upload_u32(0x1800, 3).await?);
+        assert_eq!(10, client.upload_u32(0x1800, 5).await?);
 
         Ok::<_, Box<dyn std::error::Error>>(())
     };
@@ -659,6 +671,8 @@ async fn test_pdo_defaults() {
         let tpdo1_cfg = client.read_tpdo_config(1).await.unwrap();
         assert_eq!(true, tpdo1_cfg.enabled);
         assert_eq!(CanId::std(0x201), tpdo1_cfg.cob_id);
+        assert_eq!(10, tpdo1_cfg.inhibit_timer);
+        assert_eq!(1000, tpdo1_cfg.event_timer);
         assert_eq!(254, tpdo1_cfg.transmission_type);
         assert_eq!(1, tpdo1_cfg.mappings.len());
         assert_eq!(0x2000, tpdo1_cfg.mappings[0].index);
@@ -669,6 +683,8 @@ async fn test_pdo_defaults() {
         assert_eq!(true, rpdo0_cfg.enabled);
         assert_eq!(CanId::std(0x300), rpdo0_cfg.cob_id);
         assert_eq!(254, rpdo0_cfg.transmission_type);
+        assert_eq!(0, rpdo0_cfg.inhibit_timer);
+        assert_eq!(0, rpdo0_cfg.event_timer);
         assert_eq!(2, rpdo0_cfg.mappings.len());
         assert_eq!(0x2000, rpdo0_cfg.mappings[0].index);
         assert_eq!(2u8, rpdo0_cfg.mappings[0].sub);

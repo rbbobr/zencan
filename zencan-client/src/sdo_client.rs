@@ -754,6 +754,8 @@ impl<S: AsyncCanSender, R: AsyncCanReceiver> SdoClient<S, R> {
         if cfg.cob_id.is_extended() {
             cob_value |= 1 << 29;
         }
+        self.write_u16(comm_index, 5, cfg.event_timer).await?;
+        self.write_u16(comm_index, 3, cfg.inhibit_timer).await?;
         self.write_u8(comm_index, 2, cfg.transmission_type).await?;
         self.write_u32(comm_index, 1, cob_value).await?;
 
@@ -777,6 +779,8 @@ impl<S: AsyncCanSender, R: AsyncCanReceiver> SdoClient<S, R> {
     async fn read_pdo_config(&mut self, comm_index: u16, mapping_index: u16) -> Result<PdoConfig> {
         let cob_word = self.read_u32(comm_index, 1).await?;
         let transmission_type = self.read_u8(comm_index, 2).await?;
+        let inhibit_timer = self.read_u16(comm_index, 3).await?;
+        let event_timer = self.read_u16(comm_index, 5).await?;
         let num_mappings = self.read_u8(mapping_index, 0).await?;
         let mut mappings = Vec::with_capacity(num_mappings as usize);
         for i in 0..num_mappings {
@@ -798,6 +802,8 @@ impl<S: AsyncCanSender, R: AsyncCanReceiver> SdoClient<S, R> {
             rtr_disabled,
             mappings,
             transmission_type,
+            inhibit_timer,
+            event_timer
         })
     }
 

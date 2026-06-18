@@ -16,11 +16,14 @@ fn test_system_defaults() {
 
         [pdos]
         # Setup default map for TPDO 0
+        
         [pdos.tpdo.0]
         enabled = true
         cob_id = 0x200
         add_node_id = true
         transmission_type = 254
+        inhibit_timer = 10
+        event_timer = 1000
         mappings = [
             { index=0x2000, sub=0, size=16 },
         ]
@@ -30,6 +33,8 @@ fn test_system_defaults() {
         cob_id = 0x201
         add_node_id = false
         transmission_type = 0
+        inhibit_timer = 10
+        event_timer = 1000
         mappings = [
             { index=0x2001, sub=1, size=8 },
             { index=0x2001, sub=2, size=8 },
@@ -51,7 +56,9 @@ fn test_system_defaults() {
                 sub: 0,
                 size: 16
             }],
-            transmission_type: 254
+            transmission_type: 254,
+            inhibit_timer:10,
+            event_timer:1000
         }
     );
 
@@ -75,7 +82,9 @@ fn test_system_defaults() {
                     size: 8
                 }
             ],
-            transmission_type: 0
+            transmission_type: 0,
+            inhibit_timer:10,
+            event_timer:1000
         }
     );
 }
