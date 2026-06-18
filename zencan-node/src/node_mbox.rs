@@ -167,8 +167,9 @@ impl NodeMbox {
             }
             if id == rpdo.cob_id() {
                 let mut data = [0u8; 8];
-                data[0..msg.data().len()].copy_from_slice(msg.data());
-                rpdo.buffered_value.store(Some(data));
+                let len = msg.data().len();
+                data[0..len].copy_from_slice(msg.data());
+                rpdo.buffered_value.store(Some((data, len)));
                 return Ok(());
             }
         }
@@ -191,8 +192,8 @@ impl NodeMbox {
     /// - SDO server responses    
     pub fn next_transmit_message(&self) -> Option<CanMessage> {
         for pdo in self.tx_pdos.iter() {
-            if let Some(buf) = pdo.buffered_value.take() {
-                return Some(CanMessage::new(pdo.cob_id(), &buf));
+            if let Some( (buf, len)) = pdo.buffered_value.take() {
+                return Some(CanMessage::new(pdo.cob_id(), &buf[0..len]));
             }
         }
 

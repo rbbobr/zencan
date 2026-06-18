@@ -215,7 +215,7 @@ pub struct Pdo<'a> {
     /// Tracks the number of sync signals since this was last sent or received
     sync_counter: AtomicCell<u8>,
     /// The last received data value for an RPDO, or ready to transmit data for a TPDO
-    pub buffered_value: AtomicCell<Option<[u8; 8]>>,
+    pub buffered_value: AtomicCell<Option<([u8; 8],usize)>>,
     /// Indicates how many of the values in mapping_params are valid
     ///
     /// This represents sub0 for the mapping object
@@ -475,9 +475,14 @@ impl<'a> Pdo<'a> {
                 .ok();
             offset += length;
         }
+
+
+
+
+
         // If there is an old value here which has not been sent yet, replace it with the latest
         // Data will be sent by mbox in message handling thread.
-        self.buffered_value.store(Some(data));
+        self.buffered_value.store(Some( (data,offset) ));
     }
 
     /// Lookup a PDO mapped object and create a MappingEntry if it is valid
