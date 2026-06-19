@@ -239,6 +239,10 @@ impl<'a> Node<'a> {
 
         let mut update_flag = false;
         if let Some(new_node_id) = self.reassigned_node_id.take() {
+            // refresh pdo id
+            for pdo in self.state.tpdos() {
+                pdo.set_node_id(new_node_id);
+            }
             self.node_id = new_node_id;
             self.state.set_nmt_state(NmtState::Bootup);
         }
@@ -493,7 +497,7 @@ impl<'a> Node<'a> {
         });
 
         if let NodeId::Configured(node_id) = self.node_id {
-            info!("Booting node with ID {}", node_id.raw());
+            // info!("Booting node with ID {}", node_id.raw());
             self.mbox.set_sdo_rx_cob_id(Some(self.sdo_rx_cob_id()));
             self.mbox.set_sdo_tx_cob_id(Some(self.sdo_tx_cob_id()));
             self.send_heartbeat();

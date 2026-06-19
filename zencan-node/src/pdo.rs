@@ -511,6 +511,10 @@ impl<'a> Pdo<'a> {
         })
     }
 
+    pub fn set_node_id(&self, node_id: NodeId){
+        self.node_id.store(node_id);
+    }
+
     /// Initialize the PDO configuration with its default value
     pub fn init_defaults(&'a self, node_id: NodeId) {
         if self.defaults.is_none() {
