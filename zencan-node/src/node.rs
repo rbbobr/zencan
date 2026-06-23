@@ -22,7 +22,11 @@ use crate::{
     NodeState,
 };
 
-use defmt_or_log::{debug, info};
+#[cfg(all(feature = "defmt", not(feature = "log")))]
+use defmt::{debug, info};
+#[cfg(all(feature = "log", not(feature = "defmt")))]
+use log::{debug, info};
+
 
 pub type StoreNodeConfigFn<'a> = dyn FnMut(NodeId) + 'a;
 pub type StoreObjectsFn<'a> = dyn Fn(&mut dyn embedded_io::Read<Error = Infallible>, usize) + 'a;
@@ -292,6 +296,7 @@ impl<'a> Node<'a> {
 
                 if let NodeId::Configured(node_id) = self.node_id {
                     if cmd.node == 0 || cmd.node == node_id.raw() {
+                        #[cfg(any(feature = "defmt", feature = "log"))]
                         debug!("Received NMT command: {:?}", cmd.cs);
                         self.handle_nmt_command(cmd.cs);
                     }
@@ -303,6 +308,7 @@ impl<'a> Node<'a> {
             self.send_message(resp.to_can_message(LSS_RESP_ID));
 
             if let Some(event) = self.lss_slave.pending_event() {
+                #[cfg(any(feature = "defmt", feature = "log"))]
                 info!("LSS Slave Event: {:?}", event);
                 match event {
                     crate::lss_slave::LssEvent::StoreConfiguration => {
@@ -407,6 +413,7 @@ impl<'a> Node<'a> {
             NmtCommandSpecifier::ResetComm => self.reset_comm(),
         }
 
+        #[cfg(any(feature = "defmt", feature = "log"))]
         debug!(
             "NMT state changed from {:?} to {:?}",
             prev_state,
@@ -497,7 +504,8 @@ impl<'a> Node<'a> {
         });
 
         if let NodeId::Configured(node_id) = self.node_id {
-            // info!("Booting node with ID {}", node_id.raw());
+            #[cfg(any(feature = "defmt", feature = "log"))]
+            info!("Booting node with ID {}", node_id.raw());
             self.mbox.set_sdo_rx_cob_id(Some(self.sdo_rx_cob_id()));
             self.mbox.set_sdo_tx_cob_id(Some(self.sdo_tx_cob_id()));
             self.send_heartbeat();

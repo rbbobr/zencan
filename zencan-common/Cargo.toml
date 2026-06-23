@@ -14,7 +14,6 @@ repository.workspace = true
 chrono = { version = "0.4.42", default-features = false }
 critical-section.workspace = true
 defmt = { workspace = true, optional = true }
-defmt-or-log = { workspace = true, default-features = false, features = ["at_least_one"] }
 int-enum = "1.2.0"
 regex = { version = "1.11.1", optional = true }
 serde = { workspace = true, optional = true }
@@ -33,8 +32,8 @@ assertables = "9.8.0"
 default = ["socketcan", "std", "log"]
 std = ["critical-section/std", "snafu/std", "chrono/std", "dep:toml", "dep:regex", "dep:serde"]
 socketcan = ["dep:socketcan", "dep:tokio", "std"]
-defmt = ["defmt-or-log/defmt", "dep:defmt"]
-log = ["defmt-or-log/log"]
+defmt = ["dep:defmt"]
+log = []
 
 # docs.rs-specific configuration
 [package.metadata.docs.rs]

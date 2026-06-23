@@ -511,6 +511,7 @@ impl<'a> Pdo<'a> {
         })
     }
 
+    /// Initialize the PDO id
     pub fn set_node_id(&self, node_id: NodeId){
         self.node_id.store(node_id);
     }

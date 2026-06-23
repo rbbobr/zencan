@@ -1,5 +1,9 @@
 //! Implementation of LSS slave functionality
-use defmt_or_log::info;
+#[cfg(all(feature = "defmt", not(feature = "log")))]
+use defmt::{info};
+#[cfg(all(feature = "log", not(feature = "defmt")))]
+use log::{info};
+
 use zencan_common::AtomicCell;
 use zencan_common::{
     lss::{
@@ -295,6 +299,7 @@ impl LssSlave {
                             self.fast_scan_sub = next;
                             if bit_check == 0 && next < sub {
                                 // All bits matched, enter configuration state
+                                #[cfg(any(feature = "defmt", feature = "log"))]
                                 info!("Fast scan complete, entering configuration state");
                                 self.state = LssState::Configuring;
                             }

@@ -9,7 +9,11 @@ use core::{
 use crate::object_dict::{find_object, ODEntry};
 use futures::{pending, task::noop_waker_ref};
 
-use defmt_or_log::{debug, warn};
+#[cfg(all(feature = "defmt", not(feature = "log")))]
+use defmt::{debug, warn};
+#[cfg(all(feature = "log", not(feature = "defmt")))]
+use log::{debug, warn};
+
 
 /// Specifies the types of nodes which can be serialized to persistent storage
 #[derive(Debug, Copy, Clone, PartialEq)]
@@ -276,27 +280,34 @@ pub fn restore_stored_objects_ranged(
                 }
                 if let Some(obj) = find_object(od, restore.index) {
                     if let Ok(_sub_info) = obj.sub_info(restore.sub) {
+                        #[cfg(any(feature = "defmt", feature = "log"))]
                         debug!(
                             "Restoring 0x{:x}sub{} with {:?}",
                             restore.index, restore.sub, restore.data
                         );
                         if let Err(abort_code) = obj.write(restore.sub, restore.data) {
+                            #[cfg(any(feature = "defmt", feature = "log"))]
                             warn!(
                                 "Error restoring object 0x{:x}sub{}: {:x}",
                                 restore.index, restore.sub, abort_code as u32
                             );
                         }
                     } else {
+                        #[cfg(any(feature = "defmt", feature = "log"))]
                         warn!(
                             "Saved object 0x{:x}sub{} not found in OD",
                             restore.index, restore.sub
                         );
                     }
                 } else {
+                    #[cfg(any(feature = "defmt", feature = "log"))]
                     warn!("Saved object 0x{:x} not found in OD", restore.index);
                 }
             }
-            PersistNodeRef::Unknown(id) => warn!("Unknown persisted object read: {}", id[0]),
+            PersistNodeRef::Unknown(id) => {
+                #[cfg(any(feature = "defmt", feature = "log"))]
+                warn!("Unknown persisted object read: {}", id[0])
+            },
         }
     }
 }

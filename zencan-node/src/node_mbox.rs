@@ -1,5 +1,9 @@
 //! Implements mailbox for receiving CAN messages
-use defmt_or_log::warn;
+#[cfg(all(feature = "defmt", not(feature = "log")))]
+use defmt::{warn};
+#[cfg(all(feature = "log", not(feature = "defmt")))]
+use log::{warn};
+
 use zencan_common::{
     messages::{CanId, CanMessage, SyncObject},
     AtomicCell,
@@ -155,6 +159,7 @@ impl NodeMbox {
                     self.process_notify();
                 }
             } else {
+                #[cfg(any(feature = "defmt", feature = "log"))]
                 warn!("Invalid LSS request");
                 return Err(msg);
             }

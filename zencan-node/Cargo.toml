@@ -20,7 +20,6 @@ zencan-macro.workspace = true
 crc16.workspace = true
 critical-section.workspace = true
 defmt = { workspace = true, optional = true }
-defmt-or-log.workspace = true
 embedded-io.workspace = true
 futures.workspace = true
 log = { version = "0.4", optional = true }
@@ -30,8 +29,8 @@ portable-atomic = "1.11.1"
 [features]
 default = ["log", "std"]
 std = ["critical-section/std", "zencan-common/std"]
-log = ["defmt-or-log/log", "zencan-common/log", "dep:log"]
-defmt = ["defmt-or-log/defmt", "zencan-common/defmt", "dep:defmt"]
+log = ["zencan-common/log", "dep:log"]
+defmt = ["zencan-common/defmt", "dep:defmt"]
 socketcan = ["zencan-common/socketcan", "std"]
 
 # docs.rs-specific configuration
