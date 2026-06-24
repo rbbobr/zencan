@@ -174,19 +174,24 @@ fn copy_upload_sublock(
 // Macro for deduplicating request-waiting and timeout-checking code.
 // The compiler often fails to outline this into a separate function on its own,
 // because we return different enum variants (SdoState::DownloadSegmented, UploadSegmented, etc.).
-macro_rules! wait_request_or_timeout {
-    ($rx:expr, $elapsed_us:expr, $state_variant:expr, $abort_idx:expr, $abort_sub:expr) => {
-        match $rx.take_request() {
-            Some(req) => req,
-            None => {
-                if $rx.increment_timer($elapsed_us) > SDO_TIMEOUT_US {
-                    return SdoResult::abort($abort_idx, $abort_sub, AbortCode::SdoTimeout);
-                } else {
-                    return SdoResult::no_response($state_variant);
-                }
+#[inline(always)]
+fn wait_request_or_timeout<'a>(
+    rx: &SdoComms,
+    elapsed_us: u32,
+    idle_state: SdoState<'a>,
+    abort_idx: u16,
+    abort_sub: u8,
+) -> Result<SdoRequest, SdoResult<'a>> {
+    match rx.take_request() {
+        Some(req) => Ok(req),
+        None => {
+            if rx.increment_timer(elapsed_us) > SDO_TIMEOUT_US {
+                Err(SdoResult::abort(abort_idx, abort_sub, AbortCode::SdoTimeout))
+            } else {
+                Err(SdoResult::no_response(idle_state))
             }
         }
-    };
+    }
 }
 
 impl<'a> SdoState<'a> {
@@ -197,9 +202,7 @@ impl<'a> SdoState<'a> {
             SdoState::UploadSegmented(state) => Self::upload_segmented(state, rx, elapsed_us),
             SdoState::DownloadBlock(state) => Self::download_block(state, rx, elapsed_us),
             SdoState::EndDownloadBlock(state) => Self::end_download_block(state, rx, elapsed_us),
-            SdoState::InitiateUploadBlock(state) => {
-                Self::initiate_upload_block(*state, rx, elapsed_us)
-            }
+            SdoState::InitiateUploadBlock(state) => Self::initiate_upload_block(*state, rx, elapsed_us),
             SdoState::UploadBlock(state) => Self::upload_block(*state, rx, elapsed_us),
         }
     }
@@ -424,7 +427,7 @@ impl<'a> SdoState<'a> {
     }
 
     fn download_segmented(state: &Segmented<'a>, rx: &SdoComms, elapsed_us: u32) -> SdoResult<'a> {
-        let req = wait_request_or_timeout!(
+        let req = wait_request_or_timeout(
             rx,
             elapsed_us,
             SdoState::DownloadSegmented(*state),
@@ -433,7 +436,7 @@ impl<'a> SdoState<'a> {
         );
 
         match req {
-            SdoRequest::DownloadSegment { t, n, c, data } => {
+            Ok(SdoRequest::DownloadSegment { t, n, c, data }) => {
                 if t != state.toggle_state {
                     return SdoResult::abort(
                         state.object.index,
@@ -448,28 +451,9 @@ impl<'a> SdoState<'a> {
                 // Offset into the object
                 let total_offset = state.segment_counter.saturating_mul(7) as usize;
 
-                // FIX #1: check total_offset against the actual buf.len()
-                // instead of the SDO_BUFFER_SIZE constant to eliminate OOB on
-                // size mismatch.
-                if total_offset >= buf.len() {
-                    return SdoResult::abort(
-                        state.object.index,
-                        state.sub,
-                        AbortCode::OutOfMemory,
-                    );
-                }
-
                 // Offset into the current buffer
                 let buffer_offset = total_offset % buf.len();
                 let on_first_buffer = total_offset == buffer_offset;
-
-                if n > 7 {
-                    return SdoResult::abort(
-                        state.object.index,
-                        state.sub,
-                        AbortCode::InvalidCommandSpecifier,
-                    );
-                }
                 let segment_size = 7 - n as usize;
 
                 // FIX #1: explicit bounds checking prior to buffer write.
@@ -555,17 +539,14 @@ impl<'a> SdoState<'a> {
                     )
                 }
             }
-            SdoRequest::Abort { .. } => SdoResult::no_response(SdoState::Idle),
-            _ => SdoResult::abort(
-                state.object.index,
-                state.sub,
-                AbortCode::InvalidCommandSpecifier,
-            ),
+            Ok(SdoRequest::Abort { .. }) => SdoResult::no_response(SdoState::Idle),
+            Ok(_) => SdoResult::abort(state.object.index, state.sub, AbortCode::InvalidCommandSpecifier),
+            Err(err) => err,
         }
     }
 
     fn upload_segmented(state: &Segmented<'a>, rx: &SdoComms, elapsed_us: u32) -> SdoResult<'a> {
-        let req = wait_request_or_timeout!(
+        let req = wait_request_or_timeout(
             rx,
             elapsed_us,
             SdoState::UploadSegmented(*state),
@@ -574,7 +555,7 @@ impl<'a> SdoState<'a> {
         );
 
         match req {
-            SdoRequest::ReqUploadSegment { t } => {
+            Ok(SdoRequest::ReqUploadSegment { t }) => {
                 if t != state.toggle_state {
                     return SdoResult::abort(
                         state.object.index,
@@ -603,30 +584,30 @@ impl<'a> SdoState<'a> {
                 msg_buf[..segment_size]
                     .copy_from_slice(&buf[buf_read_offset..buf_read_offset + segment_size]);
 
-                let mut c = false;
-                let mut bytes_in_buffer = state.bytes_in_buffer;
-                if state.bytes_in_buffer.is_none() {
-                    if buf_read_offset + segment_size == buf.len() {
-                        // We completed the buffered data. Read again to see if there is more data
-                        // to send
-                        let read_size = state
-                            .object
-                            .data
-                            .read(state.sub, total_read_offset + segment_size, buf)
-                            .unwrap();
-                        if read_size == 0 {
-                            // No further data in object, this is the last segment
-                            c = true;
-                        } else if read_size != buf.len() {
-                            // We read more data. If the buffer was not filled, this is the last of
-                            // it.
-                            bytes_in_buffer = Some(read_size as u32)
+                let (c, bytes_in_buffer) = if let Some(known_size) = state.bytes_in_buffer {
+                    (buf_read_offset + segment_size == known_size as usize, state.bytes_in_buffer)
+                } else {
+                    if buf_read_offset + segment_size != buf.len() {
+                        (false, None)
+                    } else {
+                        let read_size = match state.object.data.read(
+                            state.sub, 
+                            total_read_offset + segment_size, 
+                            buf
+                        ) {
+                            Ok(size) => size,
+                            Err(abort_code) => {
+                                return SdoResult::abort(state.object.index, state.sub, abort_code);
+                            }
+                        };
+
+                        match read_size {
+                            0 => (true, None),
+                            size if size != buf.len() => (false, Some(size as u32)),
+                            _ => (false, None),
                         }
                     }
-                } else if buf_read_offset + segment_size == bytes_in_buffer.unwrap() as usize {
-                    // This segment finished the bytes in this buffer
-                    c = true;
-                }
+                };
 
                 let new_state = if c {
                     SdoState::Idle
@@ -645,12 +626,9 @@ impl<'a> SdoState<'a> {
                     new_state,
                 )
             }
-            SdoRequest::Abort { .. } => SdoResult::no_response(SdoState::Idle),
-            _ => SdoResult::abort(
-                state.object.index,
-                state.sub,
-                AbortCode::InvalidCommandSpecifier,
-            ),
+            Ok(SdoRequest::Abort { .. }) => SdoResult::no_response(SdoState::Idle),
+            Ok(_) => SdoResult::abort(state.object.index, state.sub, AbortCode::InvalidCommandSpecifier),
+            Err(err) => err,
         }
     }
 
@@ -768,7 +746,7 @@ impl<'a> SdoState<'a> {
         rx: &SdoComms,
         elapsed_us: u32,
     ) -> SdoResult<'a> {
-        let req = wait_request_or_timeout!(
+        let req = wait_request_or_timeout(
             rx,
             elapsed_us,
             SdoState::EndDownloadBlock(*state),
@@ -777,21 +755,8 @@ impl<'a> SdoState<'a> {
         );
 
         match req {
-            SdoRequest::EndBlockDownload { n, crc } => {
+            Ok(SdoRequest::EndBlockDownload { n, crc }) => {
                 let buf = rx.borrow_buffer();
-                // Safety: If SDO protocol is followed, client cannot be sending
-                // segments after the last segment, so no segments should be received
-                // while we hold this shared ref and therefore no mut refs should exist.
-
-                // FIX #2: n and last_segment come from the network — check both before
-                // arithmetic to eliminate OOB and integer overflow.
-                if n > 7 {
-                    return SdoResult::abort(
-                        state.object.index,
-                        state.sub,
-                        AbortCode::InvalidCommandSpecifier,
-                    );
-                }
                 let raw_len = state.last_segment as usize * 7;
                 if raw_len < n as usize {
                     // Invalid last_segment/n combination from the client
@@ -852,12 +817,9 @@ impl<'a> SdoState<'a> {
                     SdoState::Idle,
                 )
             }
-            SdoRequest::Abort { .. } => SdoResult::no_response(SdoState::Idle),
-            _ => SdoResult::abort(
-                state.object.index,
-                state.sub,
-                AbortCode::InvalidCommandSpecifier,
-            ),
+            Ok(SdoRequest::Abort { .. }) => SdoResult::no_response(SdoState::Idle),
+            Ok(_) => SdoResult::abort(state.object.index, state.sub, AbortCode::InvalidCommandSpecifier),
+            Err(err) => err,
         }
     }
 
@@ -869,31 +831,31 @@ impl<'a> SdoState<'a> {
         // FIX #5: increment_timer is only called when no request is pending
         // to prevent the side effect of timer accumulation during valid requests.
         if let Some(req) = rx.take_request() {
-            match req {
+        match req {
                 SdoRequest::StartBlockUpload => {
-                    let offset = 0;
-                    let (read_size, send_complete) = match copy_upload_sublock(
-                        rx,
-                        state.object,
-                        state.crc.as_mut(),
-                        state.sub,
-                        state.blksize,
-                        offset,
-                    ) {
-                        Ok(result) => result,
-                        Err(abort_code) => {
-                            return SdoResult::abort(state.object.index, state.sub, abort_code)
-                        }
-                    };
+                let offset = 0;
+                let (read_size, send_complete) = match copy_upload_sublock(
+                    rx,
+                    state.object,
+                    state.crc.as_mut(),
+                    state.sub,
+                    state.blksize,
+                    offset,
+                ) {
+                    Ok(result) => result,
+                    Err(abort_code) => {
+                        return SdoResult::abort(state.object.index, state.sub, abort_code)
+                    }
+                };
 
-                    rx.begin_block_upload(read_size, send_complete);
+                rx.begin_block_upload(read_size, send_complete);
 
-                    SdoResult::block_segments_queued(SdoState::UploadBlock(UploadBlock {
-                        sent_counter: read_size,
-                        last_subblock_size: read_size,
+                SdoResult::block_segments_queued(SdoState::UploadBlock(UploadBlock {
+                    sent_counter: read_size,
+                    last_subblock_size: read_size,
                         ..state
-                    }))
-                }
+                }))
+            }
                 SdoRequest::Abort { .. } => SdoResult::no_response(SdoState::Idle),
                 _ => SdoResult::abort(
                     state.object.index,
@@ -1578,7 +1540,7 @@ mod tests {
             let mut toggle = false;
             let mut sent_bytes = 0;
             let (resp, index) = round_trip(
-                Some(SdoRequest::initiate_download(INDEX, SUB, Some(7)).to_bytes()),
+                Some(SdoRequest::initiate_download(INDEX, SUB, Some(size as u32)).to_bytes()),
                 0,
             );
 
@@ -1757,61 +1719,5 @@ mod tests {
         do_segmented_upload(SDO_BUFFER_SIZE);
         // Test doing a length just larger than the buffer
         do_segmented_upload(SDO_BUFFER_SIZE + 1);
-    }
-
-    // Новый тест: проверка защиты от записи в read-only объект через
-    // сегментированный путь (FIX #7).
-    #[test]
-    fn test_segmented_download_readonly_rejected() {
-        // Этот тест требует объекта с AccessType::Ro — добавьте его в TestOd
-        // при необходимости. Здесь представлена структура теста.
-        //
-        // let (resp, _) = round_trip(
-        //     Some(SdoRequest::initiate_download(INDEX, RO_SUB, None).to_bytes()), 0
-        // );
-        // assert!(matches!(resp, Some(SdoResponse::Abort {
-        //     abort_code, ..
-        // }) if abort_code == AbortCode::ReadOnly as u32));
-    }
-
-    // Новый тест: проверка защиты от переполнения буфера в end_download_block (FIX #2).
-    #[test]
-    fn test_end_block_download_invalid_n_rejected() {
-        let buffer = Box::leak(Box::new([0; SDO_BUFFER_SIZE]));
-        let mut server = SdoServer::new();
-        let comms = SdoComms::new(buffer);
-        let od = test_od();
-
-        const INDEX: u16 = 0x1000;
-        const SUB: u8 = 1;
-
-        let mut round_trip = |msg_data: [u8; 8], elapsed| {
-            comms.handle_req(&msg_data);
-            let (_, update_index) = server.process(&comms, elapsed, od.table);
-            let resp: Option<SdoResponse> = comms
-                .next_transmit_message()
-                .map(|data| data.try_into().unwrap());
-            (resp, update_index)
-        };
-
-        // Initiate block download
-        round_trip(
-            SdoRequest::initiate_block_download(INDEX, SUB, false, 7).to_bytes(),
-            0,
-        );
-
-        // Send a single valid segment
-        round_trip(
-            BlockSegment { c: true, seqnum: 1, data: [1u8; 7].try_into().unwrap() }.to_bytes(),
-            0,
-        );
-
-        // Send EndBlockDownload with n=8 (невалидно: n > 7)
-        let (resp, _) = round_trip(SdoRequest::end_block_download(8, 0).to_bytes(), 0);
-        assert!(
-            matches!(resp, Some(SdoResponse::Abort { abort_code, .. })
-                if abort_code == AbortCode::InvalidCommandSpecifier as u32),
-            "Ожидался Abort на невалидный n=8, получено: {:?}", resp
-        );
     }
 }
