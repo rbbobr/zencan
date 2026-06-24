@@ -896,7 +896,8 @@ impl SdoResponse {
     /// Create a `ConfirmUpload` response for an expedited upload
     pub fn expedited_upload(index: u16, sub: u8, data: &[u8]) -> SdoResponse {
         if data.len() > 4 {
-            panic!("Cannot create expedited upload with more than 4 bytes");
+            // panic!("Cannot create expedited upload with more than 4 bytes");
+            return SdoResponse::abort(index, sub, AbortCode::InvalidBlockSize);
         }
 
         let mut msg_data = [0; 4];

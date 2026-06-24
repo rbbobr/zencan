@@ -159,12 +159,15 @@ impl SdoComms {
                     }
                 }
 
-                // Unwrap: Can only fail when len is != 8, and that is checked above
-                let segment = BlockSegment::try_from(msg_data).unwrap();
-                if segment.seqnum == 0 {
+                let segment = if let Ok(segment) = BlockSegment::try_from(msg_data){
                     // seqnum 0 isn't allowed. Ignore it.
+                    if segment.seqnum == 0 {
+                        return false;
+                    }
+                    segment
+                }else{
                     return false;
-                }
+                };
 
                 let mut buffer = self.borrow_buffer();
 
