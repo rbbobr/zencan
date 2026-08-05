@@ -9,9 +9,11 @@ use zencan_common::{
     AtomicCell,
 };
 
-use crate::{
-    lss_slave::LssReceiver, pdo::Pdo, priority_queue::PriorityQueue, sdo_server::SdoComms,
-};
+#[cfg(feature = "lss-slave-support")]
+use crate::lss_slave::LssReceiver;    
+use crate::pdo::Pdo;
+use crate::priority_queue::PriorityQueue; 
+use crate::sdo_server::SdoComms;
 
 pub trait CanMessageQueue: Send + Sync {
     fn push(&self, msg: CanMessage) -> Result<(), CanMessage>;
@@ -44,6 +46,7 @@ pub struct NodeMbox {
     sdo_rx_cob_id: AtomicCell<Option<CanId>>,
     sdo_comms: SdoComms,
     nmt_mbox: AtomicCell<Option<CanMessage>>,
+    #[cfg(feature = "lss-slave-support")]
     lss_receiver: LssReceiver,
     sync_flag: AtomicCell<Option<SyncObject>>,
     process_notify_cb: AtomicCell<Option<&'static (dyn Fn() + Sync)>>,
@@ -67,6 +70,7 @@ impl NodeMbox {
         let sdo_tx_cob_id = AtomicCell::new(None);
         let sdo_comms = SdoComms::new(sdo_buffer);
         let nmt_mbox = AtomicCell::new(None);
+        #[cfg(feature = "lss-slave-support")]
         let lss_receiver = LssReceiver::new();
         let sync_flag = AtomicCell::new(None);
         let process_notify_cb = AtomicCell::new(None);
@@ -78,6 +82,7 @@ impl NodeMbox {
             sdo_tx_cob_id,
             sdo_comms,
             nmt_mbox,
+            #[cfg(feature = "lss-slave-support")]
             lss_receiver,
             sync_flag,
             process_notify_cb,
@@ -129,6 +134,7 @@ impl NodeMbox {
         self.nmt_mbox.take()
     }
 
+    #[cfg(feature = "lss-slave-support")]
     pub(crate) fn lss_receiver(&self) -> &LssReceiver {
         &self.lss_receiver
     }
@@ -154,16 +160,21 @@ impl NodeMbox {
         }
 
         if id == zencan_common::messages::LSS_REQ_ID {
-            if let Ok(lss_req) = msg.data().try_into() {
-                if self.lss_receiver.handle_req(lss_req) {
-                    self.process_notify();
-                }
-            } else {
-                #[cfg(any(feature = "defmt", feature = "log"))]
-                warn!("Invalid LSS request");
-                return Err(msg);
+            #[cfg(feature = "lss-slave-support")]
+            {
+                if let Ok(lss_req) = msg.data().try_into() {
+                    if self.lss_receiver.handle_req(lss_req) {
+                        self.process_notify();
+                    }
+                } else {
+                    #[cfg(any(feature = "defmt", feature = "log"))]
+                    warn!("Invalid LSS request");
+                    return Err(msg);
+                }   
+                return Ok(());
             }
-            return Ok(());
+            #[cfg(not(feature = "lss-slave-support"))]
+            return Err(msg);
         }
 
         for rpdo in self.rx_pdos {

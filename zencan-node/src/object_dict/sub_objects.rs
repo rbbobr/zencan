@@ -636,7 +636,7 @@ impl SubObjectAccess for CallbackSubObject {
 mod tests {
     use zencan_common::objects::{ObjectCode, SubInfo};
 
-    use crate::object_dict::{ObjectAccess, ProvidesSubObjects};
+    use crate::object_dict::{ext_access::ObjectAccessExt, ObjectAccess, ProvidesSubObjects};
 
     use super::*;
 

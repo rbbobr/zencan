@@ -192,6 +192,7 @@
 #![cfg_attr(docsrs, feature(doc_cfg))]
 
 mod bootloader;
+#[cfg(feature = "lss-slave-support")]
 mod lss_slave;
 mod node;
 mod node_mbox;

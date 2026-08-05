@@ -27,11 +27,15 @@ static_cell = "2.1.1"
 portable-atomic = "1.11.1"
 
 [features]
-default = ["log", "std"]
+default = ["log", "std", "sdo-block-transfer-support", "lss-slave-support"]
 std = ["critical-section/std", "zencan-common/std"]
 log = ["zencan-common/log", "dep:log"]
 defmt = ["zencan-common/defmt", "dep:defmt"]
 socketcan = ["zencan-common/socketcan", "std"]
+
+# optional
+sdo-block-transfer-support = []
+lss-slave-support = []
 
 # docs.rs-specific configuration
 [package.metadata.docs.rs]

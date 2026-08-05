@@ -104,6 +104,7 @@ struct Segmented<'a> {
     bytes_in_buffer: Option<u32>,
 }
 
+#[cfg(feature = "sdo-block-transfer-support")]
 #[derive(Clone, Copy)]
 struct DownloadBlock<'a> {
     sub: u8,
@@ -113,6 +114,7 @@ struct DownloadBlock<'a> {
     object: &'a ODEntry<'a>,
 }
 
+#[cfg(feature = "sdo-block-transfer-support")]
 #[derive(Clone, Copy)]
 struct UploadBlock<'a> {
     object: &'a ODEntry<'a>,
@@ -127,12 +129,17 @@ enum SdoState<'a> {
     Idle,
     DownloadSegmented(Segmented<'a>),
     UploadSegmented(Segmented<'a>),
+    #[cfg(feature = "sdo-block-transfer-support")]
     DownloadBlock(DownloadBlock<'a>),
+    #[cfg(feature = "sdo-block-transfer-support")]
     EndDownloadBlock(DownloadBlock<'a>),
+    #[cfg(feature = "sdo-block-transfer-support")]
     InitiateUploadBlock(UploadBlock<'a>),
+    #[cfg(feature = "sdo-block-transfer-support")]
     UploadBlock(UploadBlock<'a>),
 }
 
+#[cfg(feature = "sdo-block-transfer-support")]
 fn copy_upload_sublock(
     rx: &SdoComms,
     obj: &ODEntry,
@@ -200,9 +207,13 @@ impl<'a> SdoState<'a> {
             SdoState::Idle => Self::idle(od, rx),
             SdoState::DownloadSegmented(state) => Self::download_segmented(state, rx, elapsed_us),
             SdoState::UploadSegmented(state) => Self::upload_segmented(state, rx, elapsed_us),
+            #[cfg(feature = "sdo-block-transfer-support")]
             SdoState::DownloadBlock(state) => Self::download_block(state, rx, elapsed_us),
+            #[cfg(feature = "sdo-block-transfer-support")]
             SdoState::EndDownloadBlock(state) => Self::end_download_block(state, rx, elapsed_us),
+            #[cfg(feature = "sdo-block-transfer-support")]
             SdoState::InitiateUploadBlock(state) => Self::initiate_upload_block(*state, rx, elapsed_us),
+            #[cfg(feature = "sdo-block-transfer-support")]
             SdoState::UploadBlock(state) => Self::upload_block(*state, rx, elapsed_us),
         }
     }
@@ -334,6 +345,7 @@ impl<'a> SdoState<'a> {
                     )
                 }
             }
+            #[cfg(feature = "sdo-block-transfer-support")]
             SdoRequest::InitiateBlockDownload {
                 cc,
                 s,
@@ -383,6 +395,7 @@ impl<'a> SdoState<'a> {
                     }),
                 )
             }
+            #[cfg(feature = "sdo-block-transfer-support")]
             SdoRequest::InitiateBlockUpload {
                 index,
                 sub,
@@ -632,6 +645,7 @@ impl<'a> SdoState<'a> {
         }
     }
 
+    #[cfg(feature = "sdo-block-transfer-support")]
     fn download_block(state: &DownloadBlock<'a>, rx: &SdoComms, elapsed_us: u32) -> SdoResult<'a> {
         match rx.state() {
             ReceiverState::Normal => {
@@ -741,6 +755,7 @@ impl<'a> SdoState<'a> {
         }
     }
 
+    #[cfg(feature = "sdo-block-transfer-support")]
     fn end_download_block(
         state: &DownloadBlock<'a>,
         rx: &SdoComms,
@@ -823,6 +838,7 @@ impl<'a> SdoState<'a> {
         }
     }
 
+    #[cfg(feature = "sdo-block-transfer-support")]
     pub fn initiate_upload_block(
         mut state: UploadBlock<'a>,
         rx: &SdoComms,
@@ -871,6 +887,7 @@ impl<'a> SdoState<'a> {
     }
 
     // FIX #5: removed `mut state` — for the same reason as in initiate_upload_block.
+    #[cfg(feature = "sdo-block-transfer-support")]
     pub fn upload_block(
         mut state: UploadBlock<'a>, 
         rx: &SdoComms, 

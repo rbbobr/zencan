@@ -6,7 +6,7 @@ use core::{
     task::Context,
 };
 
-use crate::object_dict::{find_object, ODEntry};
+use crate::object_dict::{ext_access::ObjectAccessExt, find_object, ODEntry};
 use futures::{pending, task::noop_waker_ref};
 
 #[cfg(all(feature = "defmt", not(feature = "log")))]

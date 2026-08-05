@@ -3,24 +3,24 @@
 
 use core::{convert::Infallible, sync::atomic::Ordering};
 
+#[cfg(feature = "lss-slave-support")]
+use zencan_common::{lss::LssIdentity, messages::LSS_RESP_ID};
 use zencan_common::{
     constants::object_ids,
-    lss::LssIdentity,
     messages::{
-        CanId, CanMessage, Heartbeat, NmtCommandSpecifier, SyncObject, ZencanMessage, LSS_RESP_ID,
+        CanId, CanMessage, Heartbeat, NmtCommandSpecifier, SyncObject, ZencanMessage,
     },
     nmt::NmtState,
     NodeId,
 };
 
+#[cfg(feature = "lss-slave-support")]
+use crate::lss_slave::{LssConfig, LssSlave};
 use crate::sdo_server::SdoServer;
-use crate::{
-    lss_slave::{LssConfig, LssSlave},
-    node_mbox::NodeMbox,
-    node_state::NmtStateAccess as _,
-    object_dict::{find_object, ODEntry},
-    NodeState,
-};
+use crate::node_mbox::NodeMbox;
+use crate::node_state::NmtStateAccess as _;
+use crate::object_dict::{find_object, ODEntry};
+use crate::NodeState;
 
 #[cfg(all(feature = "defmt", not(feature = "log")))]
 use defmt::{debug, info};
@@ -99,8 +99,12 @@ impl<'a> Callbacks<'a> {
     }
 }
 
+use super::object_dict::ext_access::ObjectAccessExt;
+
+#[cfg(feature = "lss-slave-support")]
 fn read_identity(od: &[ODEntry]) -> Option<LssIdentity> {
     let obj = find_object(od, object_ids::IDENTITY)?;
+
     let vendor_id = obj.read_u32(1).ok()?;
     let product_code = obj.read_u32(2).ok()?;
     let revision = obj.read_u32(3).ok()?;
@@ -137,6 +141,7 @@ fn read_autostart(od: &[ODEntry]) -> Option<bool> {
 pub struct Node<'a> {
     node_id: NodeId,
     sdo_server: SdoServer<'a>,
+    #[cfg(feature = "lss-slave-support")]
     lss_slave: LssSlave,
     message_count: u32,
     od: &'static [ODEntry<'static>],
@@ -169,6 +174,8 @@ impl<'a> Node<'a> {
     ) -> Self {
         let message_count = 0;
         let sdo_server = SdoServer::new();
+
+        #[cfg(feature = "lss-slave-support")]
         let lss_slave = LssSlave::new(LssConfig {
             identity: read_identity(od).unwrap_or_default(),
             node_id,
@@ -194,6 +201,7 @@ impl<'a> Node<'a> {
             node_id,
             callbacks,
             sdo_server,
+            #[cfg(feature = "lss-slave-support")]
             lss_slave,
             message_count,
             od,
@@ -304,6 +312,7 @@ impl<'a> Node<'a> {
             }
         }
 
+        #[cfg(feature = "lss-slave-support")]
         if let Ok(Some(resp)) = self.lss_slave.process(self.mbox.lss_receiver()) {
             self.send_message(resp.to_can_message(LSS_RESP_ID));
 
@@ -496,7 +505,9 @@ impl<'a> Node<'a> {
     }
 
     fn boot_up(&mut self) {
+
         // Reset the LSS slave with the new ID
+        #[cfg(feature = "lss-slave-support")]
         self.lss_slave.update_config(LssConfig {
             identity: read_identity(self.od).unwrap_or_default(),
             node_id: self.node_id,

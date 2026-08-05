@@ -1,3 +1,5 @@
+#![cfg(feature = "lss-slave-support")]
+
 //! Implementation of LSS slave functionality
 #[cfg(all(feature = "defmt", not(feature = "log")))]
 use defmt::{info};
